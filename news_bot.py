@@ -7,8 +7,8 @@ USER_AGENT = "Mozilla/5.0 (compatible; WorldNewsBot/1.0)"
 
 # --- Ajustes anti-duplicados ---
 RECENT_HOURS = 48          # cuánto tiempo recuerda los titulares publicados
-SIMILARITY_JACCARD = 0.5   # más bajo = descarta más (riesgo: perder noticias distintas)
-SIMILARITY_OVERLAP = 0.75  # más bajo = descarta más
+SIMILARITY_JACCARD = 0.4   # más bajo = descarta más (riesgo: perder noticias distintas)
+SIMILARITY_OVERLAP = 0.65  # más bajo = descarta más
 
 
 def icon(domain):
