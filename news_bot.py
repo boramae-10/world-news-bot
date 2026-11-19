@@ -10,7 +10,7 @@ RECENT_HOURS = 48
 SIMILARITY_JACCARD = 0.5
 SIMILARITY_OVERLAP = 0.75
 
-MAX_PER_RUN = 1  # PRUEBA: subelo a 25 cuando termines de probar
+MAX_PER_RUN = 25  # maximo de noticias por ejecucion
 SUMMARY_LIMIT = 220
 
 
