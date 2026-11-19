@@ -49,7 +49,7 @@ KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-MAX_PER_RUN = 15  # máximo de noticias por ejecución
+MAX_PER_RUN = 1  # máximo de noticias por ejecución
 SUMMARY_LIMIT = 220  # caracteres máximos del resumen
 
 
