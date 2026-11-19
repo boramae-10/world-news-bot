@@ -1,4 +1,4 @@
-import os, json, re, time, html, requests, feedparser
+import os, json, re, time, html, calendar, requests, feedparser
 
 WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 SEEN_FILE = "seen.json"
@@ -10,8 +10,18 @@ RECENT_HOURS = 48
 SIMILARITY_JACCARD = 0.5
 SIMILARITY_OVERLAP = 0.75
 
-MAX_PER_RUN = 25  # maximo de noticias por ejecucion
+MAX_PER_RUN = 10      # maximo de noticias por ejecucion (total)
+MAX_PER_SOURCE = 2    # maximo de noticias de un mismo medio por ejecucion
+MAX_AGE_HOURS = 3     # ignora noticias publicadas hace mas de estas horas
 SUMMARY_LIMIT = 220
+
+
+def is_too_old(e):
+    published = e.get("published_parsed") or e.get("updated_parsed")
+    if not published:
+        return False
+    age = time.time() - calendar.timegm(published)
+    return age > MAX_AGE_HOURS * 3600
 
 
 def icon(domain):
@@ -327,7 +337,13 @@ def main():
                 if not uid or uid in seen:
                     continue
                 seen.add(uid)
-                text = f"{get_title(cfg, e)} {e.get('summary', '')}"
+                if is_too_old(e):
+                    continue
+                if cfg.get("google_news"):
+                    # El resumen de Google News trae titulares ajenos
+                    text = get_title(cfg, e)
+                else:
+                    text = f"{get_title(cfg, e)} {e.get('summary', '')}"
                 if cfg.get("skip_filter") or KEYWORDS.search(text):
                     new_items.append((source, cfg, e))
         except Exception as err:
@@ -336,9 +352,12 @@ def main():
     print(f"Noticias nuevas relevantes: {len(new_items)}")
 
     posted = 0
+    per_source = {}
     for source, cfg, e in new_items:
         if posted >= MAX_PER_RUN:
             break
+        if per_source.get(source, 0) >= MAX_PER_SOURCE:
+            continue
         title = get_title(cfg, e)
         tok = tokens(title)
         if is_duplicate(tok, recent_tokens):
@@ -348,6 +367,7 @@ def main():
         recent.append({"t": title, "ts": time.time()})
         recent_tokens.append(tok)
         posted += 1
+        per_source[source] = per_source.get(source, 0) + 1
         time.sleep(1.5)
 
     save_recent(recent)
