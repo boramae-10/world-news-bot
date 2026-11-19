@@ -49,7 +49,7 @@ KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-MAX_PER_RUN = 1  # máximo de noticias por ejecución
+MAX_PER_RUN = 1  # PRUEBA: súbelo a 15 cuando termines de probar
 SUMMARY_LIMIT = 220  # caracteres máximos del resumen
 
 
@@ -80,9 +80,8 @@ def get_image(e):
     return None
 
 
-def build_embed(source, cfg, e):
+def build_embed(cfg, e):
     embed = {
-        "author": {"name": source, "icon_url": icon(cfg["domain"])},
         "title": (e.get("title") or "")[:250],
         "url": e.get("link", ""),
         "color": cfg["color"],
@@ -98,9 +97,14 @@ def build_embed(source, cfg, e):
     return embed
 
 
-def post(embed):
+def post(source, cfg, embed):
+    payload = {
+        "username": source,
+        "avatar_url": icon(cfg["domain"]),
+        "embeds": [embed],
+    }
     for _ in range(3):
-        r = requests.post(WEBHOOK, json={"embeds": [embed]})
+        r = requests.post(WEBHOOK, json=payload)
         if r.status_code == 429:
             time.sleep(float(r.json().get("retry_after", 2)) + 0.5)
             continue
@@ -131,7 +135,7 @@ def main():
     print(f"Noticias nuevas relevantes: {len(new_items)}")
 
     for source, cfg, e in new_items[:MAX_PER_RUN]:
-        post(build_embed(source, cfg, e))
+        post(source, cfg, build_embed(cfg, e))
         time.sleep(1.5)
 
     with open(SEEN_FILE, "w") as f:
