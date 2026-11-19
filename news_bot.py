@@ -2,7 +2,13 @@ import os, json, re, time, html, requests, feedparser
 
 WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 SEEN_FILE = "seen.json"
+RECENT_FILE = "recent.json"
 USER_AGENT = "Mozilla/5.0 (compatible; WorldNewsBot/1.0)"
+
+# --- Ajustes anti-duplicados ---
+RECENT_HOURS = 48          # cuánto tiempo recuerda los titulares publicados
+SIMILARITY_JACCARD = 0.5   # más bajo = descarta más (riesgo: perder noticias distintas)
+SIMILARITY_OVERLAP = 0.75  # más bajo = descarta más
 
 
 def icon(domain):
@@ -14,6 +20,7 @@ def google_news(site):
 
 
 # Para quitar un medio, borra su bloque. Para añadir uno, copia un bloque y cambia los datos.
+# El ORDEN importa: si dos medios publican lo mismo, se queda el que esté antes.
 # "color": color de la barra lateral de la tarjeta (formato 0xRRGGBB).
 # "skip_filter": True -> publica todo el feed sin filtrar por palabras clave.
 FEEDS = {
@@ -132,70 +139,5 @@ KEYWORDS = re.compile(
 MAX_PER_RUN = 1  # PRUEBA: súbelo a 25 cuando termines de probar
 SUMMARY_LIMIT = 220  # caracteres máximos del resumen
 
-
-def load_seen():
-    try:
-        with open(SEEN_FILE) as f:
-            return set(json.load(f))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return set()
-
-
-def clean(text, limit=SUMMARY_LIMIT):
-    text = re.sub(r"<[^>]+>", " ", text or "")
-    text = html.unescape(re.sub(r"\s+", " ", text)).strip()
-    if len(text) <= limit:
-        return text
-    return text[:limit].rsplit(" ", 1)[0] + "…"
-
-
-def get_image(e):
-    for key in ("media_thumbnail", "media_content"):
-        items = e.get(key)
-        if items and items[0].get("url"):
-            return items[0]["url"]
-    for link in e.get("links", []):
-        if link.get("type", "").startswith("image") and link.get("href"):
-            return link["href"]
-    return None
-
-
-def get_title(cfg, e):
-    title = (e.get("title") or "").strip()
-    # Google News añade " - Nombre del medio" al final del titular
-    if cfg.get("google_news") and " - " in title:
-        title = title.rsplit(" - ", 1)[0]
-    return title
-
-
-def build_embed(cfg, e):
-    embed = {
-        "title": get_title(cfg, e)[:250],
-        "url": e.get("link", ""),
-        "color": cfg["color"],
-    }
-    if not cfg.get("google_news"):
-        desc = clean(e.get("summary", ""))
-        if desc:
-            embed["description"] = desc
-        img = get_image(e)
-        if img:
-            embed["thumbnail"] = {"url": img}
-    if e.get("published_parsed"):
-        embed["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", e["published_parsed"])
-    return embed
-
-
-def post(source, cfg, embed):
-    payload = {
-        "username": source,
-        "avatar_url": icon(cfg["domain"]),
-        "embeds": [embed],
-    }
-    for _ in range(3):
-        r = requests.post(WEBHOOK, json=payload)
-        if r.status_code == 429:
-            time.sleep(float(r.json().get("retry_after", 2)) + 0.5)
-            continue
-        if r.status_code >= 400:
-            print(f"Error Discord {r.status_code}:
+STOPWORDS = set(
+    "a an the of in on at to for and or but is are was were be been as by
