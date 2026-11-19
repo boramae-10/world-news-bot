@@ -231,6 +231,36 @@ def get_image(e):
     return None
 
 
+OG_PATTERNS = [
+    r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\']'
+    r'[^>]*content=["\']([^"\']+)["\']',
+    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*'
+    r'(?:property|name)=["\'](?:og:image|twitter:image)["\']',
+]
+
+
+def fetch_page_image(url):
+    # Busca la imagen principal del articulo (og:image) en su pagina web
+    if not url:
+        return None
+    try:
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
+        if r.status_code >= 400:
+            return None
+        page = r.text[:300000]
+        for pattern in OG_PATTERNS:
+            m = re.search(pattern, page, re.IGNORECASE)
+            if m:
+                img = html.unescape(m.group(1)).strip()
+                if img.startswith("//"):
+                    img = "https:" + img
+                if img.startswith("http"):
+                    return img
+    except Exception as err:
+        print(f"No se pudo leer la imagen de {url}: {err}")
+    return None
+
+
 def get_title(cfg, e):
     title = (e.get("title") or "").strip()
     # Google News anade " - Nombre del medio" al final
@@ -249,7 +279,7 @@ def build_embed(cfg, e):
         desc = clean(e.get("summary", ""))
         if desc:
             embed["description"] = desc
-        img = get_image(e)
+        img = fetch_page_image(e.get("link", "")) or get_image(e)
         if img:
             embed["image"] = {"url": img}
     if e.get("published_parsed"):
