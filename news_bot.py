@@ -251,7 +251,7 @@ def build_embed(cfg, e):
             embed["description"] = desc
         img = get_image(e)
         if img:
-            embed["thumbnail"] = {"url": img}
+            embed["image"] = {"url": img}
     if e.get("published_parsed"):
         fmt = "%Y-%m-%dT%H:%M:%SZ"
         embed["timestamp"] = time.strftime(fmt, e["published_parsed"])
