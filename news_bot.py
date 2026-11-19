@@ -139,5 +139,13 @@ KEYWORDS = re.compile(
 MAX_PER_RUN = 1  # PRUEBA: súbelo a 25 cuando termines de probar
 SUMMARY_LIMIT = 220  # caracteres máximos del resumen
 
-STOPWORDS = set(
-    "a an the of in on at to for and or but is are was were be been as by
+STOPWORDS = {
+    "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "but",
+    "is", "are", "was", "were", "be", "been", "as", "by", "with", "from",
+    "after", "before", "over", "under", "into", "than", "that", "this",
+    "these", "those", "it", "its", "says", "say", "said", "new", "will",
+    "would", "could", "may", "might", "has", "have", "had", "not", "no",
+    "up", "out", "about", "amid", "against", "who", "what", "when", "how",
+    "why", "you", "your", "their", "his", "her", "our", "they", "them",
+    "just", "more", "most",
+}
