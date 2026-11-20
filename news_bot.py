@@ -10,8 +10,8 @@ RECENT_HOURS = 48
 SIMILARITY_JACCARD = 0.5
 SIMILARITY_OVERLAP = 0.75
 
-MAX_PER_RUN = 10      # maximo de noticias por ejecucion (total)
-MAX_PER_SOURCE = 2    # maximo de noticias de un mismo medio por ejecucion
+MAX_PER_RUN = 5       # maximo de noticias por ejecucion (total)
+MAX_PER_SOURCE = 1    # maximo de noticias de un mismo medio por ejecucion
 MAX_AGE_HOURS = 3     # ignora noticias publicadas hace mas de estas horas
 SUMMARY_LIMIT = 220
 
@@ -37,7 +37,7 @@ def google_news(site):
 # Para quitar un medio, borra su bloque.
 # El ORDEN importa: si dos medios publican lo mismo, se queda el primero.
 # "color": color de la barra lateral (formato 0xRRGGBB).
-# "skip_filter": True -> publica todo sin filtrar por palabras.
+# "tech_only": True -> solo publica IA, espacio y tecnologia.
 FEEDS = {
     # --- Geopolitica y actualidad mundial ---
     "BBC": {
@@ -70,35 +70,35 @@ FEEDS = {
         "domain": "politico.com",
         "color": 0x8E0F1D,
     },
-    "Al Jazeera": {
-        "url": "https://www.aljazeera.com/xml/rss/all.xml",
-        "domain": "aljazeera.com",
-        "color": 0xF9A825,
+    "Le Monde": {
+        "url": "https://www.lemonde.fr/en/international/rss_full.xml",
+        "domain": "lemonde.fr",
+        "color": 0x5C6BC0,
     },
-    # --- Ciencia y tecnologia (sin filtro) ---
+    # --- Ciencia y tecnologia (solo IA, espacio y tecnologia) ---
     "BBC Science": {
         "url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
         "domain": "bbc.com",
         "color": 0x2E7D32,
-        "skip_filter": True,
+        "tech_only": True,
     },
     "BBC Technology": {
         "url": "https://feeds.bbci.co.uk/news/technology/rss.xml",
         "domain": "bbc.com",
         "color": 0x00838F,
-        "skip_filter": True,
+        "tech_only": True,
     },
     "Guardian Science": {
         "url": "https://www.theguardian.com/science/rss",
         "domain": "theguardian.com",
         "color": 0x2E7D32,
-        "skip_filter": True,
+        "tech_only": True,
     },
     "Guardian Technology": {
         "url": "https://www.theguardian.com/technology/rss",
         "domain": "theguardian.com",
         "color": 0x00838F,
-        "skip_filter": True,
+        "tech_only": True,
     },
     # EXPERIMENTALES (via Google News):
     "Associated Press": {
@@ -115,9 +115,8 @@ FEEDS = {
     },
 }
 
-# Solo se publican noticias con alguna de estas palabras
-# (excepto los feeds con "skip_filter").
-KEYWORDS = re.compile(
+# --- Geopolitica y actualidad ---
+GEO_PATTERN = (
     # Ucrania y Rusia
     r"ukrain|russia|putin|zelensk|kremlin|\bnato\b|"
     # Oriente Medio y Africa
@@ -137,26 +136,52 @@ KEYWORDS = re.compile(
     r"european union|\bEU\b|brussels|macron|merz|starmer|"
     # Conflicto y diplomacia general
     r"election|sanction|ceasefire|cease-fire|\bwar\b|missile|"
-    r"drone|nuclear|genocide|peace talks|summit|\bcoup\b|"
-    # Ciencia y fisica
-    r"scientist|\bscience\b|scientific|physics|physicist|"
-    r"quantum|particle|\bcern\b|astronom|astrophys|telescope|"
-    r"\bnobel\b|genom|\bDNA\b|crispr|biotech|nuclear fusion|"
-    r"fusion reactor|climate|\bvaccine|"
+    r"drone|nuclear|genocide|peace talks|summit|\bcoup\b"
+)
+
+# --- IA, exploracion espacial y nuevas tecnologias ---
+TECH_PATTERN = (
+    # Inteligencia artificial
+    r"artificial intelligence|\bAI\b|\bA\.I\.|chatbot|chatgpt|"
+    r"openai|anthropic|deepmind|\bgemini\b|\bclaude\b|nvidia|"
+    r"machine learning|\bLLMs?\b|neural network|generative|"
+    r"deepfake|robot|humanoid|self-driving|driverless|"
+    r"autonomous vehicle|"
     # Espacio
-    r"\bnasa\b|\besa\b|spacex|blue origin|rocket|satellite|"
-    r"spacecraft|astronaut|asteroid|outer space|space station|"
-    r"\bmoon\b|\bmars\b|\bISS\b|"
-    # Tecnologia e IA
-    r"artificial intelligence|\bAI\b|chatbot|chatgpt|openai|"
-    r"anthropic|nvidia|semiconductor|microchip|\bGPU\b|"
-    r"machine learning|\bLLM\b|robot|supercomputer|"
+    r"\bnasa\b|\besa\b|spacex|starship|blue origin|rocket|"
+    r"satellite|spacecraft|space probe|astronaut|cosmonaut|"
+    r"space station|\bISS\b|space agency|space exploration|"
+    r"outer space|\bmoon\b|lunar|\bmars\b|martian|artemis|"
+    r"asteroid|comet|telescope|james webb|exoplanet|galaxy|"
+    r"black hole|\borbit|astronom|astrophys|universe|"
+    # Nuevas tecnologias
+    r"quantum|supercomputer|semiconductor|microchip|\bchips?\b|"
+    r"\bGPU\b|nuclear fusion|fusion reactor|\bcern\b|physicist|"
     r"cyberattack|cybersecurity|ransomware|\bhackers?\b|"
     r"data breach|spyware|encryption|big tech|tech giant|"
-    r"\btech\b|technology|elon musk|\bgoogle\b|\bmicrosoft\b|"
-    r"\btesla\b",
+    r"\btech\b|technology|silicon valley|elon musk|\bgoogle\b|"
+    r"\bmicrosoft\b|\btesla\b|smartphone|electric vehicle|"
+    r"\b6G\b|virtual reality|augmented reality|brain implant|"
+    r"neuralink|3d print"
+)
+
+# Temas que NUNCA se publican (se buscan en el titular)
+EXCLUDE = re.compile(
+    r"animal|\bzoos?\b|wildlife|\bspecies\b|dinosaur|fossil|"
+    r"\bbirds?\b|whale|dolphin|shark|\bdogs?\b|\bpupp|\bcats?\b|"
+    r"kitten|\bpets?\b|insect|\bbees?\b|butterfl|primate|"
+    r"chimpanzee|gorilla|monkey|elephant|\blions?\b|tiger|"
+    r"panda|\bbears?\b|penguin|reptile|snake|\bfrogs?\b|"
+    r"mammal|creature|\bextinct|predator|\bfish\b|octopus|"
+    r"\bhorses?\b|\bcows?\b|\bdeer\b|\bwolf|\bwolves\b|\bfox",
     re.IGNORECASE,
 )
+
+# Feeds normales: geopolitica O tecnologia.
+KEYWORDS = re.compile(GEO_PATTERN + "|" + TECH_PATTERN, re.IGNORECASE)
+# Feeds de ciencia/tecnologia ("tech_only"): solo IA, espacio y tecnologia.
+TECH_KEYWORDS = re.compile(TECH_PATTERN, re.IGNORECASE)
+
 
 STOPWORDS = {
     "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or",
@@ -344,12 +369,29 @@ def main():
                     text = get_title(cfg, e)
                 else:
                     text = f"{get_title(cfg, e)} {e.get('summary', '')}"
-                if cfg.get("skip_filter") or KEYWORDS.search(text):
+                if EXCLUDE.search(get_title(cfg, e)):
+                    continue
+                if cfg.get("tech_only"):
+                    if TECH_KEYWORDS.search(text):
+                        new_items.append((source, cfg, e))
+                elif KEYWORDS.search(text):
                     new_items.append((source, cfg, e))
         except Exception as err:
             print(f"Error con {source}: {err}")
 
     print(f"Noticias nuevas relevantes: {len(new_items)}")
+
+    # Reparto por turnos: primero una noticia de cada medio, luego
+    # la segunda de cada medio, etc. Asi no acaparan los primeros.
+    by_source = {}
+    for item in new_items:
+        by_source.setdefault(item[0], []).append(item)
+    queues = list(by_source.values())
+    new_items = []
+    while any(queues):
+        for q in queues:
+            if q:
+                new_items.append(q.pop(0))
 
     posted = 0
     per_source = {}
