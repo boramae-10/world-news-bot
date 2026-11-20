@@ -75,6 +75,11 @@ FEEDS = {
         "domain": "lemonde.fr",
         "color": 0x5C6BC0,
     },
+    "Washington Post": {
+        "url": "https://feeds.washingtonpost.com/rss/world",
+        "domain": "washingtonpost.com",
+        "color": 0xB0BEC5,
+    },
     # --- Ciencia y tecnologia (solo IA, espacio y tecnologia) ---
     "BBC Science": {
         "url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
