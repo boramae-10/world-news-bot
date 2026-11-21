@@ -12,7 +12,7 @@ SIMILARITY_OVERLAP = 0.75
 
 MAX_PER_RUN = 5       # maximo de noticias por ejecucion (total)
 MAX_PER_SOURCE = 1    # maximo de noticias de un mismo medio por ejecucion
-MAX_AGE_HOURS = 3     # ignora noticias publicadas hace mas de estas horas
+MAX_AGE_HOURS = 4     # ignora noticias publicadas hace mas de estas horas
 SUMMARY_LIMIT = 220
 
 
@@ -106,12 +106,6 @@ FEEDS = {
         "tech_only": True,
     },
     # EXPERIMENTALES (via Google News):
-    "Associated Press": {
-        "url": google_news("apnews.com"),
-        "domain": "apnews.com",
-        "color": 0xFF6F00,
-        "google_news": True,
-    },
     "Asahi Shimbun": {
         "url": google_news("asahi.com/ajw"),
         "domain": "asahi.com",
