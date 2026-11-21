@@ -1,7 +1,7 @@
 name: World News
 on:
   schedule:
-    - cron: "17 */2 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install feedparser requests
+      - run: pip install feedparser requests tzdata
       - run: python news_bot.py
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
