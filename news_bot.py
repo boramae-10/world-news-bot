@@ -1,4 +1,6 @@
 import os, json, re, time, html, calendar, requests, feedparser
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 SEEN_FILE = "seen.json"
@@ -12,8 +14,18 @@ SIMILARITY_OVERLAP = 0.75
 
 MAX_PER_RUN = 5       # maximo de noticias por ejecucion (total)
 MAX_PER_SOURCE = 1    # maximo de noticias de un mismo medio por ejecucion
-MAX_AGE_HOURS = 4     # ignora noticias publicadas hace mas de estas horas
+MAX_AGE_HOURS = 4     # antiguedad maxima normal de una noticia
 SUMMARY_LIMIT = 220
+
+# --- Horario de publicacion (hora de Espana, cambia sola en verano/invierno) ---
+TIMEZONE = "Europe/Madrid"
+FIRST_HOUR = 8        # primera publicacion del dia (08:xx)
+LAST_HOUR = 22        # ultima publicacion del dia (22:xx)
+MIN_GAP_MINUTES = 110 # tiempo minimo entre publicaciones (~2 horas)
+MORNING_MAX_AGE = 11  # la primera del dia recoge noticias de la noche (horas)
+LAST_RUN_FILE = "last_run.json"
+
+max_age_hours = MAX_AGE_HOURS
 
 
 def is_too_old(e):
@@ -21,7 +33,39 @@ def is_too_old(e):
     if not published:
         return False
     age = time.time() - calendar.timegm(published)
-    return age > MAX_AGE_HOURS * 3600
+    return age > max_age_hours * 3600
+
+
+def load_last_run():
+    try:
+        with open(LAST_RUN_FILE) as f:
+            return float(json.load(f).get("ts", 0))
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return 0.0
+
+
+def should_run():
+    """Decide si toca publicar ahora. Devuelve True/False."""
+    global max_age_hours
+    now_local = datetime.now(ZoneInfo(TIMEZONE))
+    manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    last = load_last_run()
+    minutes_since = (time.time() - last) / 60 if last else None
+
+    if not manual:
+        if not (FIRST_HOUR <= now_local.hour <= LAST_HOUR):
+            print(f"Fuera de horario ({now_local:%H:%M}). No se publica.")
+            return False
+        if minutes_since is not None and minutes_since < MIN_GAP_MINUTES:
+            print(f"Ultima publicacion hace {minutes_since:.0f} min. Se espera.")
+            return False
+
+    # Primera del dia (o tras una pausa larga): recoge lo de la noche
+    if minutes_since is not None and minutes_since > 5 * 60:
+        max_age_hours = MORNING_MAX_AGE
+    print(f"Publicando ({now_local:%H:%M} hora local). "
+          f"Antiguedad maxima: {max_age_hours} h")
+    return True
 
 
 def icon(domain):
@@ -80,6 +124,21 @@ FEEDS = {
         "domain": "washingtonpost.com",
         "color": 0xB0BEC5,
     },
+    "New York Times": {
+        "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+        "domain": "nytimes.com",
+        "color": 0xECEFF1,
+    },
+    "Wall Street Journal": {
+        "url": "https://feeds.content.dowjones.io/public/rss/RSSWorldNews",
+        "domain": "wsj.com",
+        "color": 0x8D6E63,
+    },
+    "Der Spiegel": {
+        "url": "https://www.spiegel.de/international/index.rss",
+        "domain": "spiegel.de",
+        "color": 0xE64415,
+    },
     # --- Ciencia y tecnologia (solo IA, espacio y tecnologia) ---
     "BBC Science": {
         "url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
@@ -106,6 +165,12 @@ FEEDS = {
         "tech_only": True,
     },
     # EXPERIMENTALES (via Google News):
+    "Reuters": {
+        "url": google_news("reuters.com"),
+        "domain": "reuters.com",
+        "color": 0xFF8000,
+        "google_news": True,
+    },
     "Asahi Shimbun": {
         "url": google_news("asahi.com/ajw"),
         "domain": "asahi.com",
@@ -340,6 +405,8 @@ def post(source, cfg, embed):
 
 
 def main():
+    if not should_run():
+        return
     seen = load_seen()
     recent = load_recent()
     recent_tokens = [tokens(r["t"]) for r in recent]
@@ -414,6 +481,8 @@ def main():
     save_recent(recent)
     with open(SEEN_FILE, "w") as f:
         json.dump(list(seen)[-3000:], f)
+    with open(LAST_RUN_FILE, "w") as f:
+        json.dump({"ts": time.time()}, f)
     print(f"Terminado correctamente. Publicadas: {posted}")
 
 
