@@ -18,7 +18,7 @@ SUMMARY_LIMIT = 220
 
 # --- Horario (hora de Espana, cambia sola en verano/invierno) ---
 TIMEZONE = "Europe/Madrid"
-DIGEST_HOURS = [9, 20]   # tandas: 09:xx (manana) y 20:xx (tarde)
+DIGEST_HOURS = [8, 20]   # tandas: 08:xx (manana) y 20:xx (tarde)
 DIGEST_GRACE_HOURS = 3   # si GitHub se retrasa, la tanda aun sale hasta 3 h tarde
 DIGEST_MAX_AGE = 14      # la tanda recoge noticias de hasta estas horas
 STATE_FILE = "last_run.json"
