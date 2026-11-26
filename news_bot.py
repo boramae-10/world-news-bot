@@ -12,60 +12,67 @@ RECENT_HOURS = 48
 SIMILARITY_JACCARD = 0.5
 SIMILARITY_OVERLAP = 0.75
 
-MAX_PER_RUN = 5       # maximo de noticias por ejecucion (total)
-MAX_PER_SOURCE = 1    # maximo de noticias de un mismo medio por ejecucion
-MAX_AGE_HOURS = 4     # antiguedad maxima normal de una noticia
+MAX_PER_RUN = 5       # noticias por tanda (manana / tarde)
+MAX_PER_SOURCE = 1    # maximo de noticias de un mismo medio por tanda
 SUMMARY_LIMIT = 220
 
-# --- Horario de publicacion (hora de Espana, cambia sola en verano/invierno) ---
+# --- Horario (hora de Espana, cambia sola en verano/invierno) ---
 TIMEZONE = "Europe/Madrid"
-FIRST_HOUR = 8        # primera publicacion del dia (08:xx)
-LAST_HOUR = 22        # ultima publicacion del dia (22:xx)
-MIN_GAP_MINUTES = 110 # tiempo minimo entre publicaciones (~2 horas)
-MORNING_MAX_AGE = 11  # la primera del dia recoge noticias de la noche (horas)
-LAST_RUN_FILE = "last_run.json"
+DIGEST_HOURS = [9, 20]   # tandas: 09:xx (manana) y 20:xx (tarde)
+DIGEST_GRACE_HOURS = 3   # si GitHub se retrasa, la tanda aun sale hasta 3 h tarde
+DIGEST_MAX_AGE = 14      # la tanda recoge noticias de hasta estas horas
+STATE_FILE = "last_run.json"
 
-max_age_hours = MAX_AGE_HOURS
+# --- Breaking news (fuera de las tandas) ---
+BREAKING_ENABLED = True
+BREAKING_MIN_OUTLETS = 4   # cuantos medios distintos deben cubrir la noticia
+BREAKING_WINDOW_HOURS = 3  # ...y todos en las ultimas 3 horas
+BREAKING_MAX_PER_DAY = 3   # maximo de breaking news al dia
+DAY_FIRST_HOUR = 8         # "de dia" es de 08:00...
+DAY_LAST_HOUR = 22         # ...a 22:59
+# De noche solo salta si es algo enorme (mas medios a la vez)
+BREAKING_NIGHT_ENABLED = True
+BREAKING_NIGHT_MIN_OUTLETS = 6
+
+FETCH_PER_FEED = 60        # cuantas entradas se leen de cada feed
 
 
-def is_too_old(e):
+def published_ts(e):
     published = e.get("published_parsed") or e.get("updated_parsed")
     if not published:
-        return False
-    age = time.time() - calendar.timegm(published)
-    return age > max_age_hours * 3600
+        return None
+    return calendar.timegm(published)
 
 
-def load_last_run():
+def load_state():
     try:
-        with open(LAST_RUN_FILE) as f:
-            return float(json.load(f).get("ts", 0))
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
-        return 0.0
+        with open(STATE_FILE) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
+    data.setdefault("digests_done", [])
+    data.setdefault("breaking_ts", [])
+    data.setdefault("last_digest_ts", 0)
+    return data
 
 
-def should_run():
-    """Decide si toca publicar ahora. Devuelve True/False."""
-    global max_age_hours
-    now_local = datetime.now(ZoneInfo(TIMEZONE))
-    manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-    last = load_last_run()
-    minutes_since = (time.time() - last) / 60 if last else None
+def save_state(state):
+    state["digests_done"] = state["digests_done"][-20:]
+    cutoff = time.time() - 2 * 86400
+    state["breaking_ts"] = [t for t in state["breaking_ts"] if t > cutoff]
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
 
-    if not manual:
-        if not (FIRST_HOUR <= now_local.hour <= LAST_HOUR):
-            print(f"Fuera de horario ({now_local:%H:%M}). No se publica.")
-            return False
-        if minutes_since is not None and minutes_since < MIN_GAP_MINUTES:
-            print(f"Ultima publicacion hace {minutes_since:.0f} min. Se espera.")
-            return False
 
-    # Primera del dia (o tras una pausa larga): recoge lo de la noche
-    if minutes_since is not None and minutes_since > 5 * 60:
-        max_age_hours = MORNING_MAX_AGE
-    print(f"Publicando ({now_local:%H:%M} hora local). "
-          f"Antiguedad maxima: {max_age_hours} h")
-    return True
+def due_digest(now_local, state):
+    """Devuelve la clave de la tanda que toca ahora, o None."""
+    for h in DIGEST_HOURS:
+        key = f"{now_local:%Y-%m-%d}@{h}"
+        if key in state["digests_done"]:
+            continue
+        if h <= now_local.hour < h + DIGEST_GRACE_HOURS:
+            return key
+    return None
 
 
 def icon(domain):
@@ -387,12 +394,14 @@ def build_embed(cfg, e):
     return embed
 
 
-def post(source, cfg, embed):
+def post(source, cfg, embed, content=None):
     payload = {
         "username": source,
         "avatar_url": icon(cfg["domain"]),
         "embeds": [embed],
     }
+    if content:
+        payload["content"] = content
     for _ in range(3):
         r = requests.post(WEBHOOK, json=payload)
         if r.status_code == 429:
@@ -404,85 +413,161 @@ def post(source, cfg, embed):
         return
 
 
-def main():
-    if not should_run():
-        return
-    seen = load_seen()
-    recent = load_recent()
-    recent_tokens = [tokens(r["t"]) for r in recent]
-    new_items = []
-
+def collect_candidates(max_age_hours):
+    """Lee todos los feeds y devuelve las noticias que pasan los filtros."""
+    now = time.time()
+    items = []
     for source, cfg in FEEDS.items():
         try:
             feed = feedparser.parse(cfg["url"], agent=USER_AGENT)
             print(f"{source}: {len(feed.entries)} entradas")
-            entries = feed.entries
-            if cfg.get("google_news"):
-                entries = sorted(
-                    entries,
-                    key=lambda x: tuple(x.get("published_parsed") or ()),
-                    reverse=True,
-                )
-            for e in entries[:20]:
-                uid = e.get("id") or e.get("link")
-                if not uid or uid in seen:
+            for e in feed.entries[:FETCH_PER_FEED]:
+                ts = published_ts(e)
+                if ts is None or now - ts > max_age_hours * 3600:
                     continue
-                seen.add(uid)
-                if is_too_old(e):
+                title = get_title(cfg, e)
+                if not title or EXCLUDE.search(title):
                     continue
                 if cfg.get("google_news"):
                     # El resumen de Google News trae titulares ajenos
-                    text = get_title(cfg, e)
+                    text = title
                 else:
-                    text = f"{get_title(cfg, e)} {e.get('summary', '')}"
-                if EXCLUDE.search(get_title(cfg, e)):
-                    continue
+                    text = f"{title} {e.get('summary', '')}"
                 if cfg.get("tech_only"):
-                    if TECH_KEYWORDS.search(text):
-                        new_items.append((source, cfg, e))
-                elif KEYWORDS.search(text):
-                    new_items.append((source, cfg, e))
+                    ok = TECH_KEYWORDS.search(text)
+                else:
+                    ok = KEYWORDS.search(text)
+                if ok:
+                    items.append({
+                        "source": source, "cfg": cfg, "e": e, "ts": ts,
+                        "title": title, "tok": tokens(title),
+                    })
         except Exception as err:
             print(f"Error con {source}: {err}")
+    return items
 
-    print(f"Noticias nuevas relevantes: {len(new_items)}")
 
-    # Reparto por turnos: primero una noticia de cada medio, luego
-    # la segunda de cada medio, etc. Asi no acaparan los primeros.
-    by_source = {}
-    for item in new_items:
-        by_source.setdefault(item[0], []).append(item)
-    queues = list(by_source.values())
-    new_items = []
-    while any(queues):
-        for q in queues:
-            if q:
-                new_items.append(q.pop(0))
+def build_stories(items):
+    """Agrupa en una 'historia' las noticias de distintos medios sobre lo mismo."""
+    stories = []
+    for it in items:
+        for st in stories:
+            if is_duplicate(it["tok"], st["toks"]):
+                st["items"].append(it)
+                st["toks"].append(it["tok"])
+                st["outlets"].add(it["cfg"]["domain"])
+                break
+        else:
+            stories.append({
+                "items": [it], "toks": [it["tok"]],
+                "outlets": {it["cfg"]["domain"]},
+            })
+    for st in stories:
+        st["first_ts"] = min(i["ts"] for i in st["items"])
+        st["last_ts"] = max(i["ts"] for i in st["items"])
+    return stories
 
-    posted = 0
-    per_source = {}
-    for source, cfg, e in new_items:
+
+def publish(item, recent, content=None):
+    post(item["source"], item["cfg"], build_embed(item["cfg"], item["e"]), content)
+    recent.append({"t": item["title"], "ts": time.time()})
+    time.sleep(1.5)
+
+
+def run_digest(stories, recent):
+    """Tanda de manana/tarde: las 5 historias mas cubiertas por los medios."""
+    stories.sort(key=lambda s: (len(s["outlets"]), s["last_ts"]), reverse=True)
+    posted, used_sources = 0, set()
+    for st in stories:
         if posted >= MAX_PER_RUN:
             break
-        if per_source.get(source, 0) >= MAX_PER_SOURCE:
+        # Elige el medio que cuenta la historia, evitando repetir medio
+        options = [i for i in st["items"] if i["source"] not in used_sources]
+        if not options:
             continue
-        title = get_title(cfg, e)
-        tok = tokens(title)
-        if is_duplicate(tok, recent_tokens):
-            print(f"Duplicada ({source}): {title}")
-            continue
-        post(source, cfg, build_embed(cfg, e))
-        recent.append({"t": title, "ts": time.time()})
-        recent_tokens.append(tok)
+        item = options[0]
+        publish(item, recent)
+        used_sources.add(item["source"])
         posted += 1
-        per_source[source] = per_source.get(source, 0) + 1
-        time.sleep(1.5)
+        print(f"Tanda ({len(st['outlets'])} medios): {item['title']}")
+    return posted
+
+
+def run_breaking(stories, recent, state, min_outlets):
+    """Breaking news: algo que muchos medios distintos publican a la vez."""
+    now = time.time()
+    today = [t for t in state["breaking_ts"] if now - t < 86400]
+    if len(today) >= BREAKING_MAX_PER_DAY:
+        print("Limite diario de breaking news alcanzado.")
+        return 0
+    candidates = [
+        s for s in stories
+        if len(s["outlets"]) >= min_outlets
+        and now - s["first_ts"] <= BREAKING_WINDOW_HOURS * 3600
+    ]
+    if not candidates:
+        print("Sin breaking news.")
+        return 0
+    candidates.sort(key=lambda s: len(s["outlets"]), reverse=True)
+    st = candidates[0]
+    item = st["items"][0]
+    publish(item, recent, content="🔴 **BREAKING NEWS**")
+    state["breaking_ts"].append(now)
+    print(f"BREAKING ({len(st['outlets'])} medios): {item['title']}")
+    return 1
+
+
+def main():
+    now_local = datetime.now(ZoneInfo(TIMEZONE))
+    manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    state = load_state()
+
+    digest_key = due_digest(now_local, state)
+    is_day = DAY_FIRST_HOUR <= now_local.hour <= DAY_LAST_HOUR
+    min_outlets = BREAKING_MIN_OUTLETS if is_day else BREAKING_NIGHT_MIN_OUTLETS
+    if manual:
+        mode = "tanda"
+    elif digest_key:
+        mode = "tanda"
+    elif BREAKING_ENABLED and (is_day or BREAKING_NIGHT_ENABLED):
+        mode = "breaking"
+    else:
+        print(f"{now_local:%H:%M}: nada que hacer ahora.")
+        return
+    print(f"{now_local:%H:%M} hora local -> modo: {mode}")
+
+    if mode == "tanda":
+        max_age = DIGEST_MAX_AGE
+        last = state.get("last_digest_ts", 0)
+        if last:
+            max_age = min(DIGEST_MAX_AGE, (time.time() - last) / 3600 + 1)
+    else:
+        max_age = BREAKING_WINDOW_HOURS
+
+    recent = load_recent()
+    recent_tokens = [tokens(r["t"]) for r in recent]
+    items = collect_candidates(max_age)
+    stories = build_stories(items)
+    # Quita lo que ya se publico en las ultimas 48 h
+    stories = [
+        s for s in stories
+        if not any(is_duplicate(t, recent_tokens) for t in s["toks"])
+    ]
+    print(f"Noticias relevantes: {len(items)} | historias nuevas: {len(stories)}")
+
+    if mode == "tanda":
+        posted = run_digest(stories, recent)
+        if digest_key:
+            state["digests_done"].append(digest_key)
+        if not manual:
+            state["last_digest_ts"] = time.time()
+    else:
+        print(f"Breaking: hacen falta {min_outlets} medios "
+              f"({'dia' if is_day else 'noche'})")
+        posted = run_breaking(stories, recent, state, min_outlets)
 
     save_recent(recent)
-    with open(SEEN_FILE, "w") as f:
-        json.dump(list(seen)[-3000:], f)
-    with open(LAST_RUN_FILE, "w") as f:
-        json.dump({"ts": time.time()}, f)
+    save_state(state)
     print(f"Terminado correctamente. Publicadas: {posted}")
 
 
